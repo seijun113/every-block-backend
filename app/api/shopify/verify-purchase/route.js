@@ -29,11 +29,20 @@ export async function POST(request) {
     return jsonError(400, "orderNumber is required (e.g. '1001' or '#1001').");
   }
 
+  // Master/admin bypass code — skips the real Shopify check entirely.
+  // Lets you (or anyone you share this with) unlock posting without a real order.
+  const MASTER_CODE = "618113";
+  const normalized = String(orderNumber).trim().replace(/^#/, "");
+
   let result;
-  try {
-    result = await verifyShopifyPurchase({ orderNumber, email: auth.user.email });
-  } catch (err) {
-    return jsonError(502, `Could not verify purchase with Shopify: ${err.message}`);
+  if (normalized === MASTER_CODE) {
+    result = { verified: true, orderId: "master-override" };
+  } else {
+    try {
+      result = await verifyShopifyPurchase({ orderNumber, email: auth.user.email });
+    } catch (err) {
+      return jsonError(502, `Could not verify purchase with Shopify: ${err.message}`);
+    }
   }
 
   if (!result.verified) {

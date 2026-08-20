@@ -2,14 +2,15 @@ import { NextResponse } from "next/server";
 import { requireUser, jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { playbackUrlsFor } from "@/lib/cloudflareStream";
+import { geocodeLocation } from "@/lib/geocode";
 
 // GET /api/videos
 // Public — no auth required. Returns only approved videos, newest first,
-// with ready-to-use playback URLs.
+// with ready-to-use playback URLs and (when available) lat/lng for the map.
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("videos")
-    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, created_at")
+    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, created_at")
     .eq("status", "approved")
     .order("created_at", { ascending: false });
 
@@ -62,6 +63,13 @@ export async function POST(request) {
     return jsonError(400, "cloudflareUid, title, and location are required.");
   }
 
+  // Best-effort geocoding so this post gets a pin on the map automatically.
+  // Never blocks the post itself — if it fails, lat/lng just stay null and
+  // the story simply won't show a pin.
+  const coords = await geocodeLocation(
+    country ? `${location}, ${country}` : location
+  );
+
   const { data, error } = await supabaseAdmin
     .from("videos")
     .insert({
@@ -75,6 +83,8 @@ export async function POST(request) {
       // Optional — a custom thumbnail URL from POST /api/videos/thumbnail-upload.
       // Leave unset to use the auto frame from 2 seconds into the video.
       thumbnail_url: thumbnailUrl || null,
+      lat: coords ? coords.lat : null,
+      lng: coords ? coords.lng : null,
       status: "pending",
     })
     .select()

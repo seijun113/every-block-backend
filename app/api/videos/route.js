@@ -9,7 +9,7 @@ import { playbackUrlsFor } from "@/lib/cloudflareStream";
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("videos")
-    .select("id, title, caption, location, country, author, cloudflare_uid, created_at")
+    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, created_at")
     .eq("status", "approved")
     .order("created_at", { ascending: false });
 
@@ -17,10 +17,16 @@ export async function GET() {
     return jsonError(500, `Could not load videos: ${error.message}`);
   }
 
-  const videos = (data || []).map((v) => ({
-    ...v,
-    ...playbackUrlsFor(v.cloudflare_uid),
-  }));
+  const videos = (data || []).map((v) => {
+    const playback = playbackUrlsFor(v.cloudflare_uid);
+    return {
+      ...v,
+      ...playback,
+      // A custom uploaded thumbnail wins; otherwise fall back to the
+      // auto-generated frame from 2 seconds into the video.
+      thumbnailUrl: v.thumbnail_url || playback.thumbnailUrl,
+    };
+  });
 
   return NextResponse.json({ videos });
 }
@@ -51,7 +57,7 @@ export async function POST(request) {
     return jsonError(400, "Invalid JSON body.");
   }
 
-  const { cloudflareUid, title, caption, location, country, author } = body || {};
+  const { cloudflareUid, title, caption, location, country, author, thumbnailUrl } = body || {};
   if (!cloudflareUid || !title || !location) {
     return jsonError(400, "cloudflareUid, title, and location are required.");
   }
@@ -66,6 +72,9 @@ export async function POST(request) {
       location,
       country: country || null,
       author: author || "Anonymous",
+      // Optional — a custom thumbnail URL from POST /api/videos/thumbnail-upload.
+      // Leave unset to use the auto frame from 2 seconds into the video.
+      thumbnail_url: thumbnailUrl || null,
       status: "pending",
     })
     .select()

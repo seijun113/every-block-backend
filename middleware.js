@@ -16,27 +16,67 @@ function resolveOrigin(requestOrigin) {
   return ALLOWED_ORIGINS[0] || "*";
 }
 
-export function middleware(request) {
+// Best-effort client IP, same logic as lib/getClientIp.js (duplicated here
+// since middleware runs in a separate, minimal runtime and this needs to
+// stay dependency-free).
+function getClientIp(request) {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0].trim();
+    if (first) return first;
+  }
+  return request.headers.get("x-real-ip") || null;
+}
+
+// Checks the banned_ips table via a direct REST call (not the supabase-js
+// client) so this stays lightweight and safely runs in Vercel's Edge
+// runtime. Fails open (treats as "not banned") if Supabase is unreachable
+// or env vars are missing — a moderation feature should never be the thing
+// that takes your whole API down.
+async function isBanned(ip) {
+  if (!ip) return false;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/banned_ips?ip=eq.${encodeURIComponent(ip)}&select=ip`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function withCors(response, allowOrigin) {
+  response.headers.set("Access-Control-Allow-Origin", allowOrigin);
+  response.headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key");
+  response.headers.set("Access-Control-Max-Age", "86400");
+  return response;
+}
+
+export async function middleware(request) {
   const origin = request.headers.get("origin");
   const allowOrigin = resolveOrigin(origin);
 
   if (request.method === "OPTIONS") {
-    return new NextResponse(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": allowOrigin,
-        "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, x-admin-key",
-        "Access-Control-Max-Age": "86400",
-      },
-    });
+    return withCors(new NextResponse(null, { status: 204 }), allowOrigin);
   }
 
-  const response = NextResponse.next();
-  response.headers.set("Access-Control-Allow-Origin", allowOrigin);
-  response.headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key");
-  return response;
+  const ip = getClientIp(request);
+  if (await isBanned(ip)) {
+    return withCors(
+      NextResponse.json({ error: "Access denied." }, { status: 403 }),
+      allowOrigin
+    );
+  }
+
+  return withCors(NextResponse.next(), allowOrigin);
 }
 
 export const config = {

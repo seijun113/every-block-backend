@@ -20,7 +20,7 @@ export async function GET(request) {
 
   let query = supabaseAdmin
     .from("videos")
-    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, status, created_at")
+    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, status, ip, created_at")
     .order("created_at", { ascending: false });
 
   if (status !== "all") {

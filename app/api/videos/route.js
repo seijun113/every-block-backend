@@ -3,6 +3,7 @@ import { requireUser, jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { playbackUrlsFor } from "@/lib/cloudflareStream";
 import { geocodeLocation } from "@/lib/geocode";
+import { getClientIp } from "@/lib/getClientIp";
 
 // GET /api/videos
 // Public — no auth required. Returns only approved videos, newest first,
@@ -85,6 +86,7 @@ export async function POST(request) {
       thumbnail_url: thumbnailUrl || null,
       lat: coords ? coords.lat : null,
       lng: coords ? coords.lng : null,
+      ip: getClientIp(request),
       status: "pending",
     })
     .select()

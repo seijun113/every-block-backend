@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
-import { requireUser, jsonError } from "@/lib/auth";
+import { requireUser, getOptionalUser, jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { playbackUrlsFor } from "@/lib/cloudflareStream";
 import { geocodeLocation } from "@/lib/geocode";
 import { getClientIp } from "@/lib/getClientIp";
+import { countBy, serializeVideos } from "@/lib/videoSerializer";
 
 // GET /api/videos
-// Public — no auth required. Returns only approved videos, newest first,
-// with ready-to-use playback URLs and (when available) lat/lng for the map.
-export async function GET() {
+// Public — no auth required, but reads the Authorization header if present
+// so a logged-in viewer sees accurate "liked"/"saved" flags on each story.
+// Returns only approved videos, newest first.
+export async function GET(request) {
+  const optionalAuth = await getOptionalUser(request);
+
   const { data, error } = await supabaseAdmin
     .from("videos")
-    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, created_at")
+    .select("id, profile_id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, share_count, created_at")
     .eq("status", "approved")
     .order("created_at", { ascending: false });
 
@@ -19,18 +22,28 @@ export async function GET() {
     return jsonError(500, `Could not load videos: ${error.message}`);
   }
 
-  const videos = (data || []).map((v) => {
-    const playback = playbackUrlsFor(v.cloudflare_uid);
-    return {
-      ...v,
-      ...playback,
-      // A custom uploaded thumbnail wins; otherwise fall back to the
-      // auto-generated frame from 2 seconds into the video.
-      thumbnailUrl: v.thumbnail_url || playback.thumbnailUrl,
-    };
+  const videos = data || [];
+  const videoIds = videos.map((v) => v.id);
+
+  const [likesRes, likedRes, savedRes] = await Promise.all([
+    videoIds.length
+      ? supabaseAdmin.from("likes").select("video_id").in("video_id", videoIds)
+      : { data: [] },
+    optionalAuth && videoIds.length
+      ? supabaseAdmin.from("likes").select("video_id").eq("profile_id", optionalAuth.user.id).in("video_id", videoIds)
+      : { data: [] },
+    optionalAuth && videoIds.length
+      ? supabaseAdmin.from("saves").select("video_id").eq("profile_id", optionalAuth.user.id).in("video_id", videoIds)
+      : { data: [] },
+  ]);
+
+  const enriched = serializeVideos(videos, {
+    likeCounts: countBy(likesRes.data, "video_id"),
+    likedSet: new Set((likedRes.data || []).map((r) => r.video_id)),
+    savedSet: new Set((savedRes.data || []).map((r) => r.video_id)),
   });
 
-  return NextResponse.json({ videos });
+  return NextResponse.json({ videos: enriched });
 }
 
 // POST /api/videos

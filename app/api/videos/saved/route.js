@@ -3,10 +3,12 @@ import { requireUser, jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { countBy, serializeVideos } from "@/lib/videoSerializer";
 
-// GET /api/videos/saved
+// GET /api/videos/mine
 // Header: Authorization: Bearer <access_token>
-// Returns every approved story the logged-in user has saved (bookmarked),
-// newest-saved first — powers the "Saved Stories" section on My Account.
+// Returns every video the logged-in user has posted, regardless of status
+// (pending/approved/rejected) — used by the My Account page so someone can
+// see what's still under review, not just what's already public. Includes
+// like/share counts so people can see how their own posts are doing.
 export async function GET(request) {
   let auth;
   try {
@@ -16,25 +18,26 @@ export async function GET(request) {
     return jsonError(500, "Unexpected error.");
   }
 
-  const { data: saveRows, error: savesError } = await supabaseAdmin
-    .from("saves")
-    .select("video_id, created_at")
+  const { data, error } = await supabaseAdmin
+    .from("videos")
+    .select("id, profile_id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, share_count, status, created_at")
     .eq("profile_id", auth.user.id)
     .order("created_at", { ascending: false });
-  if (savesError) {
-    return jsonError(500, `Could not load saved stories: ${savesError.message}`);
+
+  if (error) {
+    return jsonError(500, `Could not load your videos: ${error.message}`);
   }
 
-  const videoIds = (saveRows || []).map((r) => r.video_id);
-  if (!videoIds.length) {
-    return NextResponse.json({ videos: [] });
-  }
+  const videos = data || [];
+  const videoIds = videos.map((v) => v.id);
+  const { data: likeRows } = videoIds.length
+    ? await supabaseAdmin.from("likes").select("video_id").in("video_id", videoIds)
+    : { data: [] };
 
-  const { data: videoRows, error: videosError } = await supabaseAdmin
-    .from("videos")
-    .select("id, profile_id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, share_count, status, created_at")
-    .in("id", videoIds)
-    .eq("status", "approved");
+  const enriched = serializeVideos(videos, { likeCounts: countBy(likeRows, "video_id") });
+
+  return NextResponse.json({ videos: enriched });
+}    .eq("status", "approved");
   if (videosError) {
     return jsonError(500, `Could not load saved stories: ${videosError.message}`);
   }

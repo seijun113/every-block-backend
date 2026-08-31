@@ -48,18 +48,4 @@ export async function POST(request, { params }) {
   }
 
   return NextResponse.json({ saved });
-}  let saved;
-  if (existing) {
-    const { error } = await supabaseAdmin.from("saves").delete().eq("id", existing.id);
-    if (error) return jsonError(500, `Could not unsave: ${error.message}`);
-    saved = false;
-  } else {
-    const { error } = await supabaseAdmin
-      .from("saves")
-      .insert({ video_id: params.id, profile_id: auth.user.id });
-    if (error) return jsonError(500, `Could not save: ${error.message}`);
-    saved = true;
-  }
-
-  return NextResponse.json({ saved });
 }

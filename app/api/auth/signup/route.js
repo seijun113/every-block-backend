@@ -34,16 +34,33 @@ export async function POST(request) {
   // Create the matching profile row. Uses the service-role client since a
   // brand-new signup has no session/RLS context yet.
   if (data.user) {
+    // Auto purchase verification: if this email already shows up in
+    // verified_purchases (a Shopify webhook recorded it the moment they
+    // paid -- possibly before they ever created an account), mark the new
+    // profile shopify_verified immediately. No order number typing needed.
+    let shopifyVerified = false;
+    let shopifyOrderId = null;
+    const { data: purchase } = await supabaseAdmin
+      .from("verified_purchases")
+      .select("shopify_order_id")
+      .ilike("email", email)
+      .maybeSingle();
+    if (purchase) {
+      shopifyVerified = true;
+      shopifyOrderId = purchase.shopify_order_id;
+    }
+
     const { error: profileError } = await supabaseAdmin.from("profiles").insert({
       id: data.user.id,
       email,
       name: name || null,
-      shopify_verified: false,
+      shopify_verified: shopifyVerified,
+      shopify_order_id: shopifyOrderId,
     });
     // 23505 = unique_violation (e.g. a retried signup) — safe to ignore.
     if (profileError && profileError.code !== "23505") {
       return NextResponse.json(
-        { error: `Account created but profile setup failed: ${profileError.message}` },
+        { error: `Account created but profile setup failed: ${'${profileError.message}'}` },
         { status: 500 }
       );
     }

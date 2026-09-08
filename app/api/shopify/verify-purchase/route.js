@@ -6,8 +6,19 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 // POST /api/shopify/verify-purchase
 // Header: Authorization: Bearer <access_token>
 // Body: { orderNumber }
-// Confirms a paid order (matched by order number + the account's email)
-// contains the Every Block Tee, then marks the account shopify_verified.
+//
+// Confirms a paid order (matched by order number ALONE) contains the
+// Every Block Tee, then marks the signed-in account shopify_verified.
+// Intentionally does not require the order's checkout email to match the
+// account's email -- many buyers check out through Shop Pay using a saved
+// email that differs from what they signed up with, and previously that
+// mismatch silently blocked verification for real customers. To stop the
+// same order being used to verify more than one account, we check that no
+// other profile already claims this order id before saving.
+//
+// NOTE: an earlier version of this route had a hardcoded master bypass
+// code that skipped the Shopify check entirely. That has been removed --
+// every verification now requires a real, paid, matching order.
 export async function POST(request) {
   let auth;
   try {
@@ -29,24 +40,33 @@ export async function POST(request) {
     return jsonError(400, "orderNumber is required (e.g. '1001' or '#1001').");
   }
 
-  // Master/admin bypass code — skips the real Shopify check entirely.
-  // Lets you (or anyone you share this with) unlock posting without a real order.
-  const MASTER_CODE = "618113";
-  const normalized = String(orderNumber).trim().replace(/^#/, "");
-
   let result;
-  if (normalized === MASTER_CODE) {
-    result = { verified: true, orderId: "master-override" };
-  } else {
-    try {
-      result = await verifyShopifyPurchase({ orderNumber, email: auth.user.email });
-    } catch (err) {
-      return jsonError(502, `Could not verify purchase with Shopify: ${err.message}`);
-    }
+  try {
+    result = await verifyShopifyPurchase({ orderNumber });
+  } catch (err) {
+    return jsonError(502, `Could not verify purchase with Shopify: ${err.message}`);
   }
 
   if (!result.verified) {
     return NextResponse.json({ verified: false, reason: result.reason }, { status: 200 });
+  }
+
+  // Prevent the same order from verifying more than one account.
+  const { data: existingClaim, error: claimLookupError } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("shopify_order_id", result.orderId)
+    .neq("id", auth.user.id)
+    .maybeSingle();
+
+  if (claimLookupError) {
+    return jsonError(500, `Could not check order usage: ${claimLookupError.message}`);
+  }
+  if (existingClaim) {
+    return NextResponse.json(
+      { verified: false, reason: "This order has already been used to verify a different account." },
+      { status: 200 }
+    );
   }
 
   const { error } = await supabaseAdmin
@@ -56,6 +76,17 @@ export async function POST(request) {
 
   if (error) {
     return jsonError(500, `Verified with Shopify but failed to save: ${error.message}`);
+  }
+
+  // Keep verified_purchases in sync using the order's own checkout email,
+  // so a future signup from that email auto-verifies too.
+  if (result.orderEmail) {
+    await supabaseAdmin
+      .from("verified_purchases")
+      .upsert(
+        { email: result.orderEmail, shopify_order_id: result.orderId, shopify_order_name: null },
+        { onConflict: "email" }
+      );
   }
 
   return NextResponse.json({ verified: true });

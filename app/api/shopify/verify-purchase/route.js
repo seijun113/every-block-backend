@@ -5,10 +5,14 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // POST /api/shopify/verify-purchase
 // Header: Authorization: Bearer <access_token>
-// Body: { orderNumber }
+// Body: { orderNumber, zip }
 //
-// Confirms a paid order (matched by order number ALONE) contains the
-// Every Block Tee, then marks the signed-in account shopify_verified.
+// Confirms a paid order (matched by order number PLUS the ZIP/postal code
+// on the order's shipping or billing address) contains the Every Block
+// Tee, then marks the signed-in account shopify_verified. The ZIP is
+// required as a second factor because Shopify order numbers are
+// sequential and easy to guess -- order number alone would let someone
+// claim a stranger's real order before the real buyer verifies it.
 // Intentionally does not require the order's checkout email to match the
 // account's email -- many buyers check out through Shop Pay using a saved
 // email that differs from what they signed up with, and previously that
@@ -35,14 +39,17 @@ export async function POST(request) {
     return jsonError(400, "Invalid JSON body.");
   }
 
-  const { orderNumber } = body || {};
+  const { orderNumber, zip } = body || {};
   if (!orderNumber) {
     return jsonError(400, "orderNumber is required (e.g. '1001' or '#1001').");
+  }
+  if (!zip) {
+    return jsonError(400, "zip is required (the ZIP/postal code from that order's shipping or billing address).");
   }
 
   let result;
   try {
-    result = await verifyShopifyPurchase({ orderNumber });
+    result = await verifyShopifyPurchase({ orderNumber, zip });
   } catch (err) {
     return jsonError(502, `Could not verify purchase with Shopify: ${err.message}`);
   }

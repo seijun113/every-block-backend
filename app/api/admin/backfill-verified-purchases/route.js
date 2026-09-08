@@ -29,6 +29,7 @@ async function runBackfill(request) {
 
   let recorded = 0;
   let profilesVerified = 0;
+  const errors = [];
 
   for (const purchase of purchases) {
     const { error: upsertError } = await supabaseAdmin
@@ -41,7 +42,10 @@ async function runBackfill(request) {
         },
         { onConflict: "email" }
       );
-    if (upsertError) continue;
+    if (upsertError) {
+      errors.push({ email: purchase.email, error: upsertError.message, code: upsertError.code });
+      continue;
+    }
     recorded += 1;
 
     const { data: updated, error: profileError } = await supabaseAdmin
@@ -50,6 +54,9 @@ async function runBackfill(request) {
       .ilike("email", purchase.email)
       .eq("shopify_verified", false)
       .select("id");
+    if (profileError) {
+      errors.push({ email: purchase.email, error: profileError.message, code: profileError.code, stage: "profile_update" });
+    }
     if (!profileError && updated) profilesVerified += updated.length;
   }
 
@@ -57,6 +64,7 @@ async function runBackfill(request) {
     ordersScanned: purchases.length,
     purchasesRecorded: recorded,
     existingProfilesVerified: profilesVerified,
+    errors,
   });
 }
 

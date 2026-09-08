@@ -4,7 +4,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { listPastVerifiedPurchases } from "@/lib/shopify";
 
 // POST /api/admin/backfill-verified-purchases
-// Header: x-admin-key: <ADMIN_API_KEY>
+// Also runnable as a plain GET with ?key=<ADMIN_API_KEY> for convenience.
+// Header: x-admin-key: <ADMIN_API_KEY>  (or query param key=<ADMIN_API_KEY>)
 //
 // One-time (safe to re-run) catch-up for the automatic purchase-verification
 // system: pages through every past Shopify order, finds the ones that are
@@ -12,8 +13,9 @@ import { listPastVerifiedPurchases } from "@/lib/shopify";
 // verified_purchases -- then immediately verifies any existing account that
 // matches. Only needed for orders placed BEFORE the orders/paid webhook was
 // set up; going forward the webhook keeps this table current on its own.
-export async function POST(request) {
-  const adminKey = request.headers.get("x-admin-key");
+async function runBackfill(request) {
+  const { searchParams } = new URL(request.url);
+  const adminKey = request.headers.get("x-admin-key") || searchParams.get("key");
   if (!process.env.ADMIN_API_KEY || adminKey !== process.env.ADMIN_API_KEY) {
     return jsonError(401, "Missing or invalid x-admin-key header.");
   }
@@ -56,4 +58,12 @@ export async function POST(request) {
     purchasesRecorded: recorded,
     existingProfilesVerified: profilesVerified,
   });
+}
+
+export async function POST(request) {
+  return runBackfill(request);
+}
+
+export async function GET(request) {
+  return runBackfill(request);
 }

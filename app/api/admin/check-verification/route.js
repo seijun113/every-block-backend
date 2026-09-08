@@ -3,7 +3,7 @@ import { jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // GET /api/admin/check-verification?email=someone@example.com
-// Header: x-admin-key: <ADMIN_API_KEY>
+// Header: x-admin-key: <ADMIN_API_KEY>  (or query param key=<ADMIN_API_KEY>)
 //
 // Read-only diagnostic: shows exactly what the database knows about one
 // email address -- whether a Shopify webhook has ever recorded a verified
@@ -12,12 +12,12 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 // figure out where an "I bought it but it still says unverified" report
 // is actually breaking down.
 export async function GET(request) {
-  const adminKey = request.headers.get("x-admin-key");
+  const { searchParams } = new URL(request.url);
+  const adminKey = request.headers.get("x-admin-key") || searchParams.get("key");
   if (!process.env.ADMIN_API_KEY || adminKey !== process.env.ADMIN_API_KEY) {
     return jsonError(401, "Missing or invalid x-admin-key header.");
   }
 
-  const { searchParams } = new URL(request.url);
   const email = (searchParams.get("email") || "").trim();
   if (!email) {
     return jsonError(400, "email query parameter is required.");

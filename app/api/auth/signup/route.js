@@ -38,16 +38,25 @@ export async function POST(request) {
     // verified_purchases (a Shopify webhook recorded it the moment they
     // paid -- possibly before they ever created an account), mark the new
     // profile shopify_verified immediately. No order number typing needed.
+    // Only trust the email->purchase match if this email is actually
+    // confirmed (proven ownership). If Supabase's "Confirm email" setting
+    // is off, email_confirmed_at is set immediately and this still works
+    // for real signups — but it stops someone from typing in a stranger's
+    // email and instantly inheriting their verified-purchase status.
+    // (If they confirm later, lib/auth.js's syncShopifyVerification()
+    // picks this up on their next request.)
     let shopifyVerified = false;
     let shopifyOrderId = null;
-    const { data: purchase } = await supabaseAdmin
-      .from("verified_purchases")
-      .select("shopify_order_id")
-      .ilike("email", email)
-      .maybeSingle();
-    if (purchase) {
-      shopifyVerified = true;
-      shopifyOrderId = purchase.shopify_order_id;
+    if (data.user.email_confirmed_at) {
+      const { data: purchase } = await supabaseAdmin
+        .from("verified_purchases")
+        .select("shopify_order_id")
+        .ilike("email", email)
+        .maybeSingle();
+      if (purchase) {
+        shopifyVerified = true;
+        shopifyOrderId = purchase.shopify_order_id;
+      }
     }
 
     const { error: profileError } = await supabaseAdmin.from("profiles").insert({

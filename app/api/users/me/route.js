@@ -24,10 +24,10 @@ function containsBlockedWord(name) {
 
 // PATCH /api/users/me
 // Header: Authorization: Bearer <access_token>
-// Body: { name }
-// Lets a signed-in user change their own username, at most once every
-// 7 days. Requires a "name_updated_at" timestamptz column on "profiles"
-// (see migration note in the repo README / commit message).
+// Body: { name?, bio? } — at least one of the two is required.
+// Lets a signed-in user change their own username (at most once every
+// 7 days; requires a "name_updated_at" timestamptz column on "profiles")
+// and/or their bio (up to 160 characters, no cooldown or uniqueness check).
 export async function PATCH(request) {
   let auth;
   try {
@@ -44,59 +44,80 @@ export async function PATCH(request) {
     return jsonError(400, "Invalid JSON body.");
   }
 
-  const name = String(body?.name || "").trim();
-  if (!name) {
-    return jsonError(400, "Username is required.");
-  }
-  if (name.length < 3) {
-    return jsonError(400, "Username must be at least 3 characters.");
-  }
-  if (name.length > 20) {
-    return jsonError(400, "Username must be 20 characters or fewer.");
-  }
-  if (!USERNAME_REGEX.test(name)) {
-    return jsonError(
-      400,
-      "Username can only contain letters, numbers, and underscores — no spaces or special characters."
-    );
-  }
-  if (containsBlockedWord(name)) {
-    return jsonError(400, "That username isn't allowed. Please choose another.");
+  const hasName = body?.name !== undefined;
+  const hasBio = body?.bio !== undefined;
+
+  if (!hasName && !hasBio) {
+    return jsonError(400, "Nothing to update.");
   }
 
-  const lastChanged = auth.profile?.name_updated_at
-    ? new Date(auth.profile.name_updated_at).getTime()
-    : null;
+  const updates = {};
 
-  if (lastChanged) {
-    const nextAllowed = lastChanged + CHANGE_COOLDOWN_MS;
-    if (Date.now() < nextAllowed) {
+  if (hasName) {
+    const name = String(body.name || "").trim();
+    if (!name) {
+      return jsonError(400, "Username is required.");
+    }
+    if (name.length < 3) {
+      return jsonError(400, "Username must be at least 3 characters.");
+    }
+    if (name.length > 20) {
+      return jsonError(400, "Username must be 20 characters or fewer.");
+    }
+    if (!USERNAME_REGEX.test(name)) {
       return jsonError(
-        429,
-        `You can change your username again on ${new Date(nextAllowed).toLocaleDateString()}.`
+        400,
+        "Username can only contain letters, numbers, and underscores — no spaces or special characters."
       );
     }
+    if (containsBlockedWord(name)) {
+      return jsonError(400, "That username isn't allowed. Please choose another.");
+    }
+
+    const lastChanged = auth.profile?.name_updated_at
+      ? new Date(auth.profile.name_updated_at).getTime()
+      : null;
+
+    if (lastChanged) {
+      const nextAllowed = lastChanged + CHANGE_COOLDOWN_MS;
+      if (Date.now() < nextAllowed) {
+        return jsonError(
+          429,
+          `You can change your username again on ${new Date(nextAllowed).toLocaleDateString()}.`
+        );
+      }
+    }
+
+    // Case-insensitive uniqueness check against every other profile.
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .ilike("name", name)
+      .neq("id", auth.user.id)
+      .maybeSingle();
+
+    if (existingError) {
+      return jsonError(500, `Could not verify username availability: ${existingError.message}`);
+    }
+    if (existing) {
+      return jsonError(409, "That username is already taken.");
+    }
+
+    updates.name = name;
+    updates.name_updated_at = new Date().toISOString();
   }
 
-  // Case-insensitive uniqueness check against every other profile.
-  const { data: existing, error: existingError } = await supabaseAdmin
-    .from("profiles")
-    .select("id")
-    .ilike("name", name)
-    .neq("id", auth.user.id)
-    .maybeSingle();
-
-  if (existingError) {
-    return jsonError(500, `Could not verify username availability: ${existingError.message}`);
-  }
-  if (existing) {
-    return jsonError(409, "That username is already taken.");
+  if (hasBio) {
+    const bio = String(body.bio || "").trim();
+    if (bio.length > 160) {
+      return jsonError(400, "Bio must be 160 characters or fewer.");
+    }
+    updates.bio = bio || null;
   }
 
-  const now = new Date().toISOString();
   const { data, error } = await supabaseAdmin
     .from("profiles")
-    .update({ name, name_updated_at: now })
+    .update(updates)
     .eq("id", auth.user.id)
     .select()
     .single();
@@ -105,7 +126,7 @@ export async function PATCH(request) {
     if (error.code === "23505") {
       return jsonError(409, "That username is already taken.");
     }
-    return jsonError(500, `Could not update name: ${error.message}`);
+    return jsonError(500, `Could not update profile: ${error.message}`);
   }
 
   return NextResponse.json({ profile: data });

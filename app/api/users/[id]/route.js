@@ -23,7 +23,7 @@ export async function GET(request, { params }) {
   const [videosRes, followerCountRes, followingCountRes, isFollowingRes] = await Promise.all([
     supabaseAdmin
       .from("videos")
-      .select("id, profile_id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, share_count, created_at")
+      .select("id, profile_id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, lat, lng, share_count, view_count, created_at")
       .eq("profile_id", params.id)
       .eq("status", "approved")
       .order("created_at", { ascending: false }),

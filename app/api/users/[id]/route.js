@@ -13,7 +13,7 @@ export async function GET(request, { params }) {
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("profiles")
-    .select("id, name, created_at")
+    .select("id, name, created_at, bio")
     .eq("id", params.id)
     .single();
   if (profileError || !profile) {
@@ -68,6 +68,7 @@ export async function GET(request, { params }) {
       id: profile.id,
       name: profile.name,
       created_at: profile.created_at,
+      bio: profile.bio || null,
     },
     videos: enrichedVideos,
     followerCount: followerCountRes.count || 0,

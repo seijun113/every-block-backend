@@ -5,7 +5,7 @@ import { jsonError } from "@/lib/auth";
 // Body: { name, email, topic, message }
 // Sends the contact-page form to the site's inbox via Resend. Requires a
 // RESEND_API_KEY env var (from https://resend.com) set in Vercel.
-const CONTACT_INBOX = "everblockhasastory@gmail.com";
+const CONTACT_INBOX = "everyblockhasastory@gmail.com";
 
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

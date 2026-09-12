@@ -2,6 +2,39 @@ import { NextResponse } from "next/server";
 import { supabaseAnon } from "@/lib/supabaseAnon";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+// Same rules enforced in PATCH /api/users/me. Kept here too so a username
+// can't skip validation by being set at signup time instead.
+const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
+const BLOCKED_WORDS = [
+  "fuck", "shit", "bitch", "asshole", "cunt", "nigger", "nigga", "faggot",
+  "fag", "retard", "rape", "rapist", "pedo", "nazi", "slut", "whore",
+  "dick", "pussy", "cock", "kike", "chink", "spic", "tranny", "bastard",
+  "cum", "porn", "sex",
+];
+function containsBlockedWord(value) {
+  const lower = value.toLowerCase();
+  return BLOCKED_WORDS.some((word) => lower.includes(word));
+}
+async function sanitizeSignupName(rawName) {
+  const trimmed = String(rawName || "").trim();
+  if (!trimmed) return null;
+  if (
+    trimmed.length < 3 ||
+    trimmed.length > 20 ||
+    !USERNAME_REGEX.test(trimmed) ||
+    containsBlockedWord(trimmed)
+  ) {
+    return null;
+  }
+  const { data: existing } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .ilike("name", trimmed)
+    .maybeSingle();
+  if (existing) return null;
+  return trimmed;
+}
+
 // POST /api/auth/signup
 // Body: { email, password, name? }
 export async function POST(request) {
@@ -62,7 +95,7 @@ export async function POST(request) {
     const { error: profileError } = await supabaseAdmin.from("profiles").insert({
       id: data.user.id,
       email,
-      name: name || null,
+      name: await sanitizeSignupName(name),
       shopify_verified: shopifyVerified,
       shopify_order_id: shopifyOrderId,
     });

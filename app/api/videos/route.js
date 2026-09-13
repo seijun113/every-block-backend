@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { geocodeLocation } from "@/lib/geocode";
 import { getClientIp } from "@/lib/getClientIp";
 import { countBy, serializeVideos } from "@/lib/videoSerializer";
+import { playbackUrlsFor } from "@/lib/cloudflareStream";
+import { reviewVideo } from "@/lib/aiReview";
 
 // GET /api/videos
 // Public — no auth required, but reads the Authorization header if present
@@ -109,8 +111,36 @@ export async function POST(request) {
     return jsonError(500, `Could not save video: ${error.message}`);
   }
 
-  return NextResponse.json(
-    { video: data, message: "Saved. It will appear publicly once approved." },
-    { status: 201 }
-  );
+  // Automatic AI review — checks for inappropriate content, spam, and
+  // whether this is actually an on-topic neighborhood story. If the AI
+  // can't reach a verdict (missing ANTHROPIC_API_KEY, network error,
+  // unparseable response), the video is left "pending" for manual review
+  // in admin.html instead of guessing.
+  let finalVideo = data;
+  let message = "Saved. It will appear publicly once approved.";
+  const review = await reviewVideo({
+    title,
+    caption,
+    location,
+    country,
+    thumbnailUrl: thumbnailUrl || playbackUrlsFor(cloudflareUid).thumbnailUrl,
+  });
+
+  if (review) {
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from("videos")
+      .update({ status: review.verdict, ai_reason: review.reason })
+      .eq("id", data.id)
+      .select()
+      .single();
+    if (!updateError && updated) {
+      finalVideo = updated;
+      message =
+        review.verdict === "approved"
+          ? "Your story is live!"
+          : `Your story wasn't approved: ${review.reason}`;
+    }
+  }
+
+  return NextResponse.json({ video: finalVideo, message }, { status: 201 });
 }

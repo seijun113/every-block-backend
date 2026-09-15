@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser, jsonError } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { reviewProfilePhoto } from "@/lib/aiReview";
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -72,6 +73,18 @@ export async function POST(request) {
   const { data } = supabaseAdmin.storage.from("thumbnails").getPublicUrl(path);
   const url = data.publicUrl;
   const column = type === "avatar" ? "avatar_url" : "banner_url";
+
+  // Automatic NSFW/appropriateness check before this becomes someone's
+  // public-facing photo. If the AI can't reach a verdict (missing
+  // ANTHROPIC_API_KEY, network error, unparseable response), fail OPEN —
+  // allow the upload — rather than block a legitimate photo just because
+  // moderation is temporarily unavailable. Only an explicit "rejected"
+  // verdict blocks it.
+  const review = await reviewProfilePhoto({ imageUrl: url, type });
+  if (review && review.verdict === "rejected") {
+    await supabaseAdmin.storage.from("thumbnails").remove([path]);
+    return jsonError(400, `That image wasn't approved: ${review.reason}`);
+  }
 
   const { error: updateError } = await supabaseAdmin
     .from("profiles")

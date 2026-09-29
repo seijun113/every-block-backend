@@ -20,7 +20,7 @@ export async function GET(request) {
 
   let query = supabaseAdmin
     .from("videos")
-    .select("id, title, caption, location, country, author, cloudflare_uid, thumbnail_url, status, ip, ai_reason, created_at")
+    .select("id, post_type, title, caption, body, photo_urls, location, country, author, cloudflare_uid, thumbnail_url, status, ip, ai_reason, created_at")
     .order("created_at", { ascending: false });
 
   if (status !== "all") {
@@ -37,11 +37,13 @@ export async function GET(request) {
   }
 
   const videos = (data || []).map((v) => {
-    const playback = playbackUrlsFor(v.cloudflare_uid);
+    const playback = v.cloudflare_uid ? playbackUrlsFor(v.cloudflare_uid) : { iframeUrl: null, thumbnailUrl: null };
     return {
       ...v,
       ...playback,
-      thumbnailUrl: v.thumbnail_url || playback.thumbnailUrl,
+      postType: v.post_type || "video",
+      photoUrls: v.photo_urls || [],
+      thumbnailUrl: v.thumbnail_url || playback.thumbnailUrl || (v.photo_urls && v.photo_urls[0]) || null,
     };
   });
 
